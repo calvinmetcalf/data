@@ -15,11 +15,13 @@ var Relationship = function(store, record, inverseKey, relationshipMeta) {
   //This probably breaks for polymorphic relationship in complex scenarios, due to
   //multiple possible typeKeys
   this.inverseKeyForimplicit = this.store.modelFor(this.record.constructor).typeKey + this.key;
+  //Cached promise when fetching the relationship from a link
+  this.linkPromise = null;
+  this.hasFetchedLink = false;
 };
 
 Relationship.prototype = {
   constructor: Relationship,
-  hasFetchedLink: false,
 
   destroy: Ember.K,
 
@@ -99,7 +101,25 @@ Relationship.prototype = {
     if (link !== this.link) {
       this.link = link;
       this.hasFetchedLink = false;
+      this.linkPromise = null;
       this.record.notifyPropertyChange(this.key);
+    }
+  },
+
+  fetchLink: function() {
+    var self = this;
+    if (this.linkPromise && this.isFetchingLink) {
+      return this.linkPromise;
+    } else {
+      var promise = this._fetchLink();
+      this.linkPromise = promise;
+      this.isFetchingLink = true;
+      return promise.then(function(result) {
+        self.hasFetchedLink = true;
+        return result;
+      })["finally"](function() {
+        self.isFetchingLink = false;
+      });
     }
   },
 
@@ -173,14 +193,22 @@ ManyRelationship.prototype.computeChanges = function(records) {
   }, this);
 };
 
-ManyRelationship.prototype.fetchLink = function() {
+ManyRelationship.prototype._fetchLink = function() {
   var self = this;
   return this.store.findHasMany(this.record, this.link, this.relationshipMeta).then(function(records){
     self.updateRecordsFromAdapter(records);
-    self.hasFetchedLink = true;
     //Goes away after the manyArray refactor
     self.manyArray.set('isLoaded', true);
     return self.manyArray;
+  });
+};
+
+ManyRelationship.prototype.findRecords = function() {
+  var manyArray = this.manyArray;
+  return this.store.findMany(manyArray.toArray()).then(function(){
+    //Goes away after the manyArray refactor
+    manyArray.set('isLoaded', true);
+    return manyArray;
   });
 };
 
@@ -189,14 +217,11 @@ ManyRelationship.prototype.getRecords = function() {
     var self = this;
     var promise;
     if (this.link && !this.hasFetchedLink) {
-      promise = this.fetchLink();
-    } else {
-      var manyArray = this.manyArray;
-      promise = this.store.findMany(manyArray.toArray()).then(function(){
-        //Goes away after the manyArray refactor
-        self.manyArray.set('isLoaded', true);
-        return manyArray;
+      promise = this.fetchLink().then(function() {
+        return self.findRecords();
       });
+    } else {
+      promise = this.findRecords();
     }
     return PromiseManyArray.create({
       content: this.manyArray,
