@@ -190,8 +190,6 @@ ManyRelationship.prototype.fetchLink = function() {
   var self = this;
   return this.store.findHasMany(this.record, this.link, this.relationshipMeta).then(function(records){
     self.updateRecordsFromAdapter(records);
-    //Goes away after the manyArray refactor
-    self.manyArray.set('isLoaded', true);
     return self.manyArray;
   });
 };
