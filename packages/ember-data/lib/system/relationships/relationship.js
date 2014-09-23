@@ -17,7 +17,6 @@ var Relationship = function(store, record, inverseKey, relationshipMeta) {
   this.inverseKeyForimplicit = this.store.modelFor(this.record.constructor).typeKey + this.key;
   //Cached promise when fetching the relationship from a link
   this.linkPromise = null;
-  this.hasFetchedLink = false;
 };
 
 Relationship.prototype = {
@@ -100,25 +99,19 @@ Relationship.prototype = {
   updateLink: function(link) {
     if (link !== this.link) {
       this.link = link;
-      this.hasFetchedLink = false;
       this.linkPromise = null;
       this.record.notifyPropertyChange(this.key);
     }
   },
 
-  fetchLink: function() {
-    var self = this;
-    if (this.linkPromise && this.isFetchingLink) {
+  findLink: function() {
+    if (this.linkPromise) {
       return this.linkPromise;
     } else {
-      var promise = this._fetchLink();
+      var promise = this.fetchLink();
       this.linkPromise = promise;
-      this.isFetchingLink = true;
       return promise.then(function(result) {
-        self.hasFetchedLink = true;
         return result;
-      })["finally"](function() {
-        self.isFetchingLink = false;
       });
     }
   },
@@ -193,7 +186,7 @@ ManyRelationship.prototype.computeChanges = function(records) {
   }, this);
 };
 
-ManyRelationship.prototype._fetchLink = function() {
+ManyRelationship.prototype.fetchLink = function() {
   var self = this;
   return this.store.findHasMany(this.record, this.link, this.relationshipMeta).then(function(records){
     self.updateRecordsFromAdapter(records);
@@ -216,8 +209,8 @@ ManyRelationship.prototype.getRecords = function() {
   if (this.isAsync) {
     var self = this;
     var promise;
-    if (this.link && !this.hasFetchedLink) {
-      promise = this.fetchLink().then(function() {
+    if (this.link) {
+      promise = this.findLink().then(function() {
         return self.findRecords();
       });
     } else {
@@ -283,21 +276,32 @@ BelongsToRelationship.prototype.removeRecordFromOwn = function(record) {
   this.inverseRecord = null;
 };
 
+BelongsToRelationship.prototype.findRecord = function() {
+  if (this.inverseRecord) {
+    return this.store._findByRecord(this.inverseRecord);
+  } else {
+    return Ember.RSVP.Promise.resolve(null);
+  }
+};
+
+BelongsToRelationship.prototype.fetchLink = function() {
+  var self = this;
+  return this.store.findBelongsTo(this.record, this.link, this.relationshipMeta).then(function(record){
+    self.addRecord(record);
+    return record;
+  });
+};
+
 BelongsToRelationship.prototype.getRecord = function() {
   if (this.isAsync) {
     var promise;
-
-    if (this.link && !this.hasFetchedLink){
+    if (this.link){
       var self = this;
-      promise = this.store.findBelongsTo(this.record, this.link, this.relationshipMeta).then(function(record){
-        self.addRecord(record);
-        self.hasFetchedLink = true;
-        return record;
+      promise = this.findLink().then(function() {
+        return self.findRecord();
       });
-    } else if (this.inverseRecord) {
-      promise = this.store._findByRecord(this.inverseRecord);
     } else {
-      promise = Ember.RSVP.Promise.resolve(null);
+      promise = this.findRecord();
     }
 
     return PromiseObject.create({
